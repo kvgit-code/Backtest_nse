@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Weekly-high breakout backtest</title>
+<style>
+:root{
+  --paper:#f4f6f8; --card:#ffffff; --ink:#17212b; --muted:#5d6b78; --rule:#c9d1d9;
+  --gain:#1f7a4d; --loss:#b3372f; --pen:#2349a6; --wash:#e9eef5;
+  --serif:ui-serif,"Iowan Old Style","Palatino Linotype",Georgia,serif;
+  --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+}
+@media (prefers-color-scheme:dark){
+  :root{--paper:#11171d; --card:#18212a; --ink:#e6ebf0; --muted:#97a5b3; --rule:#33414e;
+        --gain:#4cc38a; --loss:#ef7b72; --pen:#8aa8f0; --wash:#1e2933;}
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.5 var(--sans);font-variant-numeric:tabular-nums}
+main{max-width:1000px;margin:0 auto;padding:20px 16px 48px}
+h1{font:600 26px/1.2 var(--serif);margin:0 0 4px}
+h2{font:600 18px/1.3 var(--serif);margin:28px 0 8px}
+.sub{color:var(--muted);font-size:13px;margin:0 0 16px}
+.sub.err{color:var(--loss)}
+details.panel{background:var(--card);border:1px solid var(--rule);border-radius:6px;padding:0}
+details.panel>summary{cursor:pointer;padding:12px 14px;font-weight:600;list-style:none}
+details.panel>summary::-webkit-details-marker{display:none}
+details.panel>summary::after{content:"Hide";float:right;color:var(--muted);font-weight:400;font-size:13px}
+details.panel:not([open])>summary::after{content:"Show"}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;padding:0 14px 14px}
+label{display:block;font-size:12.5px;color:var(--muted)}
+input{width:100%;margin-top:3px;padding:8px 9px;border:1px solid var(--rule);border-radius:4px;background:var(--paper);color:var(--ink);font:inherit}
+input:focus-visible,button:focus-visible,summary:focus-visible{outline:2px solid var(--pen);outline-offset:2px}
+.hint{display:block;font-size:11.5px;color:var(--muted);margin-top:2px}
+.actions{display:flex;flex-wrap:wrap;gap:8px;padding:0 14px 14px}
+button{font:inherit;padding:9px 16px;border-radius:4px;border:1px solid var(--rule);background:var(--card);color:var(--ink);cursor:pointer}
+button.go{background:var(--pen);border-color:var(--pen);color:#fff;font-weight:600}
+@media (prefers-color-scheme:dark){button.go{color:#0d1420}}
+/* statement of account */
+.statement{background:var(--card);border:1px solid var(--rule);border-radius:6px;padding:6px 14px 10px}
+.row{display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px solid var(--wash)}
+.row span:first-child{color:var(--muted)}
+.row b{font-weight:600;text-align:right}
+.row.total{border-bottom:0;padding-top:10px;margin-top:4px;border-top:1px solid var(--ink)}
+.row.total span:first-child{color:var(--ink);font-weight:600}
+.row.total b{font-size:20px;font-family:var(--serif);padding-bottom:3px;border-bottom:3px double var(--ink)}
+.pos{color:var(--gain)} .neg{color:var(--loss)}
+.listbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin:0 0 16px;font-size:13px;color:var(--muted)}
+.listbar button{padding:6px 12px;font-size:13px}
+.listbar a{color:var(--pen);cursor:pointer;text-decoration:underline}
+#listmsg{flex-basis:100%}
+.cols{display:grid;gap:12px;grid-template-columns:1fr}
+@media (min-width:760px){.cols{grid-template-columns:1fr 1fr}}
+.chartbox{background:var(--card);border:1px solid var(--rule);border-radius:6px;padding:10px 10px 4px}
+.chartbox h3{font:600 13px var(--sans);color:var(--muted);margin:0 0 4px 4px}
+canvas{width:100%;height:220px;display:block}
+canvas.short{height:110px}
+.tools{display:flex;gap:8px;align-items:center;margin-bottom:8px}
+.tools input{max-width:220px;margin:0}
+.tablewrap{overflow-x:auto;background:var(--card);border:1px solid var(--rule);border-radius:6px}
+table{border-collapse:collapse;width:100%;font-size:13.5px;white-space:nowrap}
+th,td{padding:7px 10px;text-align:right;border-bottom:1px solid var(--wash)}
+th{font-weight:600;color:var(--muted);background:var(--wash);position:sticky;top:0}
+th:first-child,td:first-child{text-align:left}
+.note{font-size:12.5px;color:var(--muted);margin-top:28px}
+.note li{margin-bottom:4px}
+</style>
+</head>
+<body>
+<main>
+  <h1>Weekly-high breakout backtest</h1>
+  <p class="sub" id="dataline">Loading price data…</p>
+  <div class="listbar">
+    <span id="listinfo"></span>
+    <button id="rebuild">Rebuild stock list</button>
+    <a id="forget" hidden>Forget saved GitHub token</a>
+    <span id="listmsg" role="status"></span>
+  </div>
+
+  <details class="panel" open>
+    <summary>Settings</summary>
+    <div class="grid">
+      <label>Capital (₹)<input id="capital" type="number" min="1000" step="1000"></label>
+      <label>Amount per buy (₹)<input id="unit" type="number" min="100" step="100"><span class="hint" id="slotsHint"></span></label>
+      <label>Target on average cost (%)<input id="target" type="number" min="0.1" step="0.01"></label>
+      <label>Averaging levels (% below entry)<input id="levels" type="text" inputmode="decimal"><span class="hint">Comma separated, same amount each</span></label>
+      <label>Entry buffer above prev. week high (%)<input id="buf" type="number" min="0" step="0.05"></label>
+      <label>Stop-loss below average cost (%)<input id="stop" type="number" min="0" step="0.5"><span class="hint">0 = no stop-loss</span></label>
+      <label>Stocks in pool (top N by turnover)<input id="topN" type="number" min="1" step="1"></label>
+      <label>Cost per side (%)<input id="cost" type="number" min="0" step="0.01"></label>
+      <label>DP charge per sale (₹)<input id="dp" type="number" min="0" step="0.5"></label>
+      <label>Start date<input id="start" type="date"></label>
+      <label>End date<input id="end" type="date"></label>
+    </div>
+    <div class="actions">
+      <button class="go" id="run">Run backtest</button>
+      <button id="reset">Reset to defaults</button>
+      <button id="csv">Download trades (CSV)</button>
+    </div>
+  </details>
+
+  <h2>Statement</h2>
+  <div class="statement" id="statement"></div>
+
+  <h2>Equity</h2>
+  <div class="cols">
+    <div class="chartbox"><h3>Account value (₹), including open positions</h3><canvas id="eqChart"></canvas></div>
+    <div class="chartbox"><h3>Slots in use</h3><canvas id="unitChart" class="short"></canvas></div>
+  </div>
+
+  <h2>Open positions</h2>
+  <div class="tablewrap"><table id="openTbl"></table></div>
+
+  <h2>Closed trades</h2>
+  <div class="tools"><input id="filter" type="search" placeholder="Filter by symbol" aria-label="Filter trades by symbol"><span class="sub" id="tradeCount" style="margin:0"></span></div>
+  <div class="tablewrap" style="max-height:480px"><table id="tradeTbl"></table></div>
+
+  <ul class="note">
+    <li>Entry: price crosses the previous week's high (gap-ups fill at the open). One entry attempt per stock per week.</li>
+    <li>Each buy, whether entry or averaging, uses one slot. Averaging levels are measured from the original entry price.</li>
+    <li>Daily candles: no exit or averaging on the entry day; if a day touches both a stop and the target, the stop is taken first; if it touches the target and an averaging level, the exit is taken first.</li>
+    <li>The pool is today's top stocks applied to past years, so results are flattered by survivorship. Prices are split and dividend adjusted.</li>
+  </ul>
+</main>
+
+<script>
+// ENGINE START
+function toDay(s){const [y,m,d]=s.split('-').map(Number);return Date.UTC(y,m-1,d)/864e5;}
+
+function runBacktest(D,P){
+  const dates=D.dates,n=dates.length;
+  const wk=dates.map(s=>Math.floor((toDay(s)+3)/7));
+  let i0=0,i1=n-1;
+  if(P.start){i0=dates.findIndex(d=>d>=P.start);if(i0<0)i0=n;}
+  if(P.end){i1=-1;for(let i=n-1;i>=0;i--){if(dates[i]<=P.end){i1=i;break;}}}
+  const syms=D.symbols.slice(0,P.topN),S=syms.length;
+
+  // previous week's high, per symbol, per day
+  const trig=syms.map(sy=>{
+    const t=new Array(n).fill(null);let cw=-1,ch=-Infinity,ph=null;
+    for(let i=0;i<n;i++){
+      const h=sy.h[i];if(h==null)continue;
+      if(wk[i]!==cw){if(cw!==-1)ph=ch;cw=wk[i];ch=-Infinity;}
+      t[i]=ph;if(h>ch)ch=h;
+    }
+    return t;
+  });
+
+  const slots=Math.floor(P.capital/P.unit),lv=P.levels;
+  const pos=new Map(),trades=[],eq=[],units=[],eqDates=[];
+  const lastClose=new Array(S).fill(null),lastTouch=new Array(S).fill(-1);
+  let used=0,realised=0,missE=0,missA=0,peak=0;
+
+  function close(k,p,px,status,d){
+    const proceeds=px*p.sh,avg=p.inv/p.sh;
+    const pnl=proceeds-p.inv-(p.ch+proceeds*P.cost+P.dp);
+    realised+=pnl;used-=p.u;
+    trades.push({symbol:syms[k].s,entry:p.date,exit:d,buys:p.u,shares:p.sh,avg:avg,
+      exitPx:px,pnl:pnl,pct:pnl/p.inv*100,days:Math.round(toDay(d)-toDay(p.date)),status:status});
+    pos.delete(k);
+  }
+
+  for(let i=i0;i<=i1;i++){
+    const d=dates[i];
+    // 1) exits and averaging
+    for(const [k,p] of Array.from(pos)){
+      const sy=syms[k],o=sy.o[i];if(o==null)continue;
+      const h=sy.h[i],l=sy.l[i],avg=p.inv/p.sh;
+      if(P.stop>0){const sp=avg*(1-P.stop/100);if(l<=sp){close(k,p,Math.min(o,sp),'stop',d);continue;}}
+      const tg=avg*(1+P.target/100);
+      if(h>=tg){close(k,p,Math.max(o,tg),'target',d);continue;}
+      while(p.step<lv.length){
+        const L=p.entry*(1-lv[p.step]);if(l>L)break;
+        if(used<slots){
+          const px=Math.min(o,L),q=Math.floor(P.unit/px);
+          if(q>=1){p.sh+=q;p.inv+=q*px;p.ch+=q*px*P.cost;p.u++;used++;}
+        }else missA++;
+        p.step++;
+      }
+    }
+    // 2) new entries, in rank order
+    for(let k=0;k<S;k++){
+      if(pos.has(k))continue;
+      const sy=syms[k],o=sy.o[i];if(o==null)continue;
+      const t=trig[k][i];if(t==null)continue;
+      const lvl=t*(1+P.buf/100);
+      if(lastTouch[k]===wk[i]||sy.h[i]<lvl)continue;
+      lastTouch[k]=wk[i];
+      if(used>=slots){missE++;continue;}
+      const px=Math.max(o,lvl),q=Math.floor(P.unit/px);if(q<1)continue;
+      pos.set(k,{entry:px,date:d,sh:q,inv:q*px,ch:q*px*P.cost,u:1,step:0});used++;
+    }
+    peak=Math.max(peak,used);
+    // 3) mark to market
+    let unreal=0;
+    for(const [k,p] of pos){
+      const c=syms[k].c[i];if(c!=null)lastClose[k]=c;
+      unreal+=p.sh*(lastClose[k]!=null?lastClose[k]:p.entry)-p.inv-p.ch;
+    }
+    eq.push(P.capital+realised+unreal);units.push(used);eqDates.push(d);
+  }
+
+  const open=[];let unrealEnd=0;
+  for(const [k,p] of pos){
+    const c=lastClose[k]!=null?lastClose[k]:p.entry,avg=p.inv/p.sh,pnl=p.sh*c-p.inv-p.ch;
+    unrealEnd+=pnl;
+    open.push({symbol:syms[k].s,entry:p.date,buys:p.u,shares:p.sh,avg:avg,last:c,pnl:pnl,pct:(c/avg-1)*100,
+      days:Math.round(toDay(eqDates[eqDates.length-1])-toDay(p.date))});
+  }
+
+  let maxDD=0,runMax=-Infinity;
+  for(const v of eq){if(v>runMax)runMax=v;maxDD=Math.min(maxDD,v/runMax-1);}
+  const final=eq.length?eq[eq.length-1]:P.capital;
+  const years=eq.length?Math.max((toDay(eqDates[eqDates.length-1])-toDay(eqDates[0]))/365.25,1e-9):1;
+  const wins=trades.filter(t=>t.pnl>0).length;
+  const stats={closed:trades.length,wins:wins,realised:realised,unrealised:unrealEnd,final:final,
+    ret:(final/P.capital-1)*100,cagr:(Math.pow(final/P.capital,1/years)-1)*100,maxDD:maxDD*100,
+    peak:peak,slots:slots,missE:missE,missA:missA,
+    avgDays:trades.length?trades.reduce((a,t)=>a+t.days,0)/trades.length:0,
+    maxDays:trades.reduce((a,t)=>Math.max(a,t.days),0),
+    worst:open.length?open.reduce((a,b)=>a.pct<b.pct?a:b):null,openCount:open.length};
+  return {trades:trades,open:open,dates:eqDates,equity:eq,units:units,stats:stats};
+}
+// ENGINE END
+
+// ---------- UI ----------
+const DEFAULTS={capital:100000,unit:5000,target:6.28,levels:'1,3,5',buf:0,stop:0,topN:250,cost:0.12,dp:16,start:'',end:''};
+const $=id=>document.getElementById(id);
+let DATA=null,RESULT=null;
+
+const inr=x=>(x<0?'−':'')+'₹'+Math.abs(Math.round(x)).toLocaleString('en-IN');
+const pct=(x,d=1)=>(x>0?'+':x<0?'−':'')+Math.abs(x).toFixed(d)+'%';
+const cls=x=>x>0?'pos':x<0?'neg':'';
+
+function readParams(){
+  const num=(id,def)=>{const v=parseFloat($(id).value);return isFinite(v)?v:def;};
+  const levels=$('levels').value.split(',').map(s=>parseFloat(s)/100).filter(v=>isFinite(v)&&v>0).sort((a,b)=>a-b);
+  return {capital:num('capital',DEFAULTS.capital),unit:Math.max(num('unit',DEFAULTS.unit),1),
+    target:num('target',DEFAULTS.target),levels:levels,buf:num('buf',0),stop:num('stop',0),
+    topN:Math.max(1,Math.floor(num('topN',DEFAULTS.topN))),cost:num('cost',DEFAULTS.cost)/100,dp:num('dp',DEFAULTS.dp),
+    start:$('start').value,end:$('end').value};
+}
+function writeParams(p){
+  for(const k of Object.keys(DEFAULTS))$(k==='dp'?'dp':k).value=p[k]!==undefined?p[k]:DEFAULTS[k];
+}
+function saveParams(){
+  const raw={};for(const k of Object.keys(DEFAULTS))raw[k]=$(k).value;
+  try{localStorage.setItem('kb_params',JSON.stringify(raw));}catch(e){}
+}
+function loadParams(){
+  try{const s=localStorage.getItem('kb_params');if(s)return JSON.parse(s);}catch(e){}
+  return null;
+}
+
+function row(label,val,c,total){return '<div class="row'+(total?' total':'')+'"><span>'+label+'</span><b class="'+(c||'')+'">'+val+'</b></div>';}
+
+function renderStatement(P,r){
+  const s=r.stats,net=s.realised+s.unrealised;
+  $('slotsHint').textContent=s.slots+' slots at this amount';
+  $('statement').innerHTML=
+    row('Closed trades',s.closed)+
+    row('Hit rate (closed)',s.closed?(s.wins/s.closed*100).toFixed(1)+'%':'–')+
+    row('Average holding (closed)',s.closed?Math.round(s.avgDays)+' days (longest '+s.maxDays+')':'–')+
+    row('Realised profit',inr(s.realised),cls(s.realised))+
+    row('Open positions at end ('+s.openCount+')',inr(s.unrealised),cls(s.unrealised))+
+    row('Worst open position',s.worst?s.worst.symbol+' '+pct(s.worst.pct):'–',s.worst?cls(s.worst.pct):'')+
+    row('Max drawdown (account value)',pct(s.maxDD),cls(s.maxDD))+
+    row('Return per year (CAGR)',pct(s.cagr),cls(s.cagr))+
+    row('Peak slots used',s.peak+' of '+s.slots)+
+    row('Entries missed, no free slot',s.missE)+
+    row('Averages skipped, no free slot',s.missA)+
+    row('Net profit · '+pct(s.ret)+' on '+inr(P.capital),inr(net),cls(net),true);
+}
+
+function chart(cv,dates,vals,o){
+  const dpr=window.devicePixelRatio||1,w=cv.clientWidth,h=cv.clientHeight;
+  cv.width=w*dpr;cv.height=h*dpr;
+  const g=cv.getContext('2d');g.setTransform(dpr,0,0,dpr,0,0);g.clearRect(0,0,w,h);
+  if(!vals.length)return;
+  const cs=getComputedStyle(document.documentElement),ink=cs.getPropertyValue('--muted').trim(),
+    rule=cs.getPropertyValue('--rule').trim(),line=cs.getPropertyValue(o.color).trim();
+  const L=o.padL||52,R=8,T=8,B=20;
+  let lo=Math.min.apply(null,vals),hi=Math.max.apply(null,vals);
+  if(o.base!=null){lo=Math.min(lo,o.base);hi=Math.max(hi,o.base);}
+  if(o.zero)lo=0;if(hi===lo)hi=lo+1;
+  const X=i=>L+(w-L-R)*(vals.length===1?0:i/(vals.length-1)),Y=v=>T+(h-T-B)*(1-(v-lo)/(hi-lo));
+  g.font='11px system-ui,sans-serif';g.fillStyle=ink;g.strokeStyle=rule;g.lineWidth=1;
+  const ticks=o.ticks||4;
+  for(let t=0;t<=ticks;t++){
+    const v=lo+(hi-lo)*t/ticks,y=Y(v);
+    g.beginPath();g.moveTo(L,y);g.lineTo(w-R,y);g.globalAlpha=.5;g.stroke();g.globalAlpha=1;
+    g.textAlign='right';g.fillText(o.fmt(v),L-6,y+4);
+  }
+  if(o.base!=null){g.setLineDash([4,4]);g.strokeStyle=ink;g.beginPath();g.moveTo(L,Y(o.base));g.lineTo(w-R,Y(o.base));g.stroke();g.setLineDash([]);}
+  g.beginPath();
+  vals.forEach((v,i)=>{const x=X(i),y=Y(v);if(i===0)g.moveTo(x,y);else{if(o.step)g.lineTo(x,Y(vals[i-1]));g.lineTo(x,y);}});
+  g.strokeStyle=line;g.lineWidth=1.6;g.stroke();
+  if(o.fill){g.lineTo(X(vals.length-1),Y(lo));g.lineTo(X(0),Y(lo));g.closePath();g.globalAlpha=.15;g.fillStyle=line;g.fill();g.globalAlpha=1;g.fillStyle=ink;}
+  g.textAlign='left';g.fillText(dates[0],L,h-5);
+  g.textAlign='right';g.fillText(dates[dates.length-1],w-R,h-5);
+}
+function renderCharts(r){
+  chart($('eqChart'),r.dates,r.equity,{color:'--pen',base:RESULT_CAPITAL,fmt:v=>'₹'+(v/1000).toFixed(0)+'k'});
+  chart($('unitChart'),r.dates,r.units,{color:'--pen',zero:true,step:true,fill:true,ticks:2,padL:34,fmt:v=>String(Math.round(v))});
+}
+let RESULT_CAPITAL=100000;
+
+function th(cols){return '<tr>'+cols.map(c=>'<th>'+c+'</th>').join('')+'</tr>';}
+function renderOpen(r){
+  const rows=r.open.slice().sort((a,b)=>a.pct-b.pct);
+  $('openTbl').innerHTML=th(['Stock','Entry','Buys','Shares','Avg cost','Last','P&L','P&L %','Days'])+
+    (rows.length?rows.map(t=>'<tr><td>'+t.symbol+'</td><td>'+t.entry+'</td><td>'+t.buys+'</td><td>'+t.shares+'</td><td>'+t.avg.toFixed(2)+
+      '</td><td>'+t.last.toFixed(2)+'</td><td class="'+cls(t.pnl)+'">'+inr(t.pnl)+'</td><td class="'+cls(t.pct)+'">'+pct(t.pct)+'</td><td>'+t.days+'</td></tr>').join('')
+    :'<tr><td colspan="9" style="text-align:left">No open positions at the end of the period.</td></tr>');
+}
+function renderTrades(){
+  if(!RESULT)return;
+  const q=$('filter').value.trim().toUpperCase();
+  const all=RESULT.trades.slice().reverse().filter(t=>!q||t.symbol.indexOf(q)>=0);
+  const rows=all.slice(0,300);
+  $('tradeCount').textContent=all.length+' trades'+(all.length>300?' (showing latest 300; CSV has all)':'');
+  $('tradeTbl').innerHTML=th(['Stock','Entry','Exit','Buys','Avg cost','Exit price','P&L','P&L %','Days','How'])+
+    rows.map(t=>'<tr><td>'+t.symbol+'</td><td>'+t.entry+'</td><td>'+t.exit+'</td><td>'+t.buys+'</td><td>'+t.avg.toFixed(2)+'</td><td>'+t.exitPx.toFixed(2)+
+      '</td><td class="'+cls(t.pnl)+'">'+inr(t.pnl)+'</td><td class="'+cls(t.pct)+'">'+pct(t.pct,2)+'</td><td>'+t.days+'</td><td>'+t.status+'</td></tr>').join('');
+}
+
+function run(){
+  if(!DATA)return;
+  const P=readParams();RESULT_CAPITAL=P.capital;
+  RESULT=runBacktest(DATA,P);
+  renderStatement(P,RESULT);renderCharts(RESULT);renderOpen(RESULT);renderTrades();saveParams();
+}
+
+function downloadCsv(){
+  if(!RESULT)return;
+  const head=['symbol','entry','exit','buys','shares','avg_cost','exit_price','pnl','pnl_pct','days','status'];
+  const lines=[head.join(',')].concat(RESULT.trades.map(t=>[t.symbol,t.entry,t.exit,t.buys,t.shares,t.avg.toFixed(2),t.exitPx.toFixed(2),t.pnl.toFixed(2),t.pct.toFixed(2),t.days,t.status].join(',')));
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([lines.join('\n')],{type:'text/csv'}));
+  a.download='trades.csv';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+}
+
+async function init(){
+  const saved=loadParams();writeParams(saved||DEFAULTS);
+  $('run').onclick=run;
+  $('reset').onclick=()=>{writeParams(DEFAULTS);if(DATA){$('start').value=DATA.dates[0];$('end').value=DATA.dates[DATA.dates.length-1];}run();};
+  $('csv').onclick=downloadCsv;$('filter').oninput=renderTrades;
+  document.querySelectorAll('.grid input').forEach(el=>el.addEventListener('keydown',e=>{if(e.key==='Enter')run();}));
+  window.addEventListener('resize',()=>{if(RESULT)renderCharts(RESULT);});
+  try{
+    const res=await fetch('data.json',{cache:'no-cache'});
+    if(!res.ok)throw new Error('HTTP '+res.status);
+    DATA=await res.json();
+  }catch(e){
+    $('dataline').className='sub err';
+    $('dataline').textContent='Could not load data.json ('+e.message+'). Run the "Update price data" workflow once, then reload.';
+    return;
+  }
+  const first=DATA.dates[0],last=DATA.dates[DATA.dates.length-1];
+  $('start').min=$('end').min=first;$('start').max=$('end').max=last;
+  if(!$('start').value||$('start').value<first)$('start').value=first;
+  if(!$('end').value||$('end').value>last)$('end').value=last;
+  const upd=DATA.generated?new Date(DATA.generated).toLocaleString('en-IN',{dateStyle:'medium',timeStyle:'short'}):'';
+  $('dataline').textContent='Prices to '+last+' · '+DATA.symbols.length+' stocks ranked by '+DATA.ranked_by+' · refreshed '+upd;
+  $('topN').max=DATA.symbols.length;
+  $('listinfo').textContent=DATA.list_built?('Stock list rebuilt on '+DATA.list_built+'. It changes only when you rebuild it; prices update daily.'):'Stock list comes from your tickers.csv.';
+  run();
+}
+
+// ---------- Rebuild stock list (triggers the GitHub workflow) ----------
+function ghCfg(){try{return JSON.parse(localStorage.getItem('kb_gh')||'null');}catch(e){return null;}}
+function showForget(){$('forget').hidden=!ghCfg();}
+async function rebuildList(){
+  const msg=$('listmsg');
+  let cfg=ghCfg();
+  if(!cfg){
+    const repo=(prompt('Your GitHub repo, as owner/name:')||'').trim();
+    if(!repo)return;
+    const token=(prompt('GitHub token (fine-grained, this repo only, Actions: read and write). It is kept only in this browser:')||'').trim();
+    if(!token)return;
+    cfg={repo:repo,token:token,ref:'main'};
+  }
+  if(!confirm('Rebuild the stock list from NSE now? This runs the update job once (about 3 to 5 minutes).'))return;
+  msg.textContent='Starting the update job…';
+  try{
+    const r=await fetch('https://api.github.com/repos/'+cfg.repo+'/actions/workflows/update.yml/dispatches',{
+      method:'POST',
+      headers:{'Authorization':'Bearer '+cfg.token,'Accept':'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28'},
+      body:JSON.stringify({ref:cfg.ref||'main',inputs:{refresh_list:'true'}})});
+    if(r.status===204){
+      try{localStorage.setItem('kb_gh',JSON.stringify(cfg));}catch(e){}
+      showForget();
+      msg.textContent='Started. Give it about 5 minutes (job plus site redeploy), then reload this page to see the new list.';
+    }else{
+      if(r.status===401||r.status===403||r.status===404){try{localStorage.removeItem('kb_gh');}catch(e){}showForget();}
+      msg.textContent='GitHub said '+r.status+'. Check the repo name, branch (main) and that the token has Actions read and write on that repo. You will be asked again next time.';
+    }
+  }catch(e){msg.textContent='Could not reach GitHub ('+e.message+').';}
+}
+$('rebuild').onclick=rebuildList;
+$('forget').onclick=()=>{try{localStorage.removeItem('kb_gh');}catch(e){}showForget();$('listmsg').textContent='Token removed from this browser.';};
+showForget();
+init();
+</script>
+</body>
+</html>
